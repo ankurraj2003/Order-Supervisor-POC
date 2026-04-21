@@ -1,0 +1,262 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #000000;
+  --color-foreground: #ffffff;
+  --color-surface: #0a0a0a;
+  --color-surface-hover: #141414;
+  --color-border: #262626;
+  --color-border-bright: #404040;
+  
+  /* Golden Theme */
+  --color-primary: #d4af37;
+  --color-primary-dim: #b5952f;
+  
+  /* Secondary/Accent (White/Silver) */
+  --color-accent: #f3f4f6;
+  --color-accent-dim: #d1d5db;
+  
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-danger-dim: #dc2626;
+  --color-muted: #737373;
+  --color-muted-light: #a3a3a3;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* Base styles */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #404040 transparent;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Minimal Card Effect (replaces glass-card) */
+.glass-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px; /* Minimal rectangular */
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+}
+
+.glass-card:hover {
+  border-color: var(--color-border-bright);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
+}
+
+/* Status badge styles */
+.status-running {
+  background: rgba(212, 175, 55, 0.1);
+  color: #d4af37;
+  border: 1px solid rgba(212, 175, 55, 0.3);
+}
+
+.status-sleeping {
+  background: rgba(243, 244, 246, 0.1);
+  color: #f3f4f6;
+  border: 1px solid rgba(243, 244, 246, 0.3);
+}
+
+.status-paused {
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.status-completed {
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-terminated {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* Activity type colors */
+.activity-event { border-left: 3px solid #d4af37; } /* Gold */
+.activity-agent_action { border-left: 3px solid #ffffff; } /* White */
+.activity-agent_reasoning { border-left: 3px solid #737373; } /* Gray */
+.activity-wake_decision { border-left: 3px solid #f59e0b; }
+.activity-sleep_decision { border-left: 3px solid #d1d5db; }
+.activity-state_update { border-left: 3px solid #404040; }
+.activity-instruction_added { border-left: 3px solid #b5952f; }
+.activity-final_output { border-left: 3px solid #d4af37; }
+.activity-system { border-left: 3px solid #262626; }
+
+/* Pulse animation */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 4px rgba(212, 175, 55, 0.4); }
+  50% { box-shadow: 0 0 12px rgba(212, 175, 55, 0.8); }
+}
+
+.pulse-dot {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Fade-in animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* Slide-in animation */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+/* Button base */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 4px; /* Minimal rectangular */
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: 1px solid transparent;
+  outline: none;
+  letter-spacing: 0.025em; /* Premium feel */
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #000000; /* Black text on gold */
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-dim);
+  box-shadow: 0 4px 14px rgba(212, 175, 55, 0.4);
+}
+
+.btn-accent {
+  background: var(--color-foreground);
+  color: #000000; /* Black text on white */
+}
+
+.btn-accent:hover:not(:disabled) {
+  background: var(--color-accent-dim);
+  box-shadow: 0 4px 14px rgba(255, 255, 255, 0.2);
+}
+
+.btn-warning {
+  background: var(--color-warning);
+  color: #000000;
+}
+
+.btn-warning:hover:not(:disabled) {
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.4);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-muted-light);
+  border: 1px solid var(--color-border);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-foreground);
+  border-color: var(--color-border-bright);
+}
+
+/* Input styles */
+.input {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px; /* Sharp corners */
+  padding: 0.5rem 0.75rem;
+  color: var(--color-foreground);
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.2);
+}
+
+.input::placeholder {
+  color: var(--color-muted);
+}
+
+/* Select styles */
+.select {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  color: var(--color-foreground);
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+  width: 100%;
+  cursor: pointer;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.2);
+}
+
+/* Textarea */
+.textarea {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  color: var(--color-foreground);
+  font-size: 0.875rem;
+  resize: vertical;
+  min-height: 80px;
+  width: 100%;
+  font-family: var(--font-sans);
+  transition: all 0.2s ease;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.2);
+}
