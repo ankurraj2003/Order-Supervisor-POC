@@ -1,4 +1,4 @@
-# 🤖 Order Supervisor POC
+# Order Supervisor POC
 
 **AI-powered, long-running order supervision system.**  
 One autonomous supervisor run per order — from creation to completion.
