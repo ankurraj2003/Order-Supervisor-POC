@@ -1,74 +1,471 @@
-# Order Supervisor POC
+# 🤖 Order Supervisor POC
 
-AI-powered long-running order supervision system. One supervisor run per order, from creation to completion.
+**AI-powered, long-running order supervision system.**  
+One autonomous supervisor run per order — from creation to completion.
 
-## Architecture & Flow
+> An event-driven architecture where an AI agent monitors, reasons about, and takes action on orders over their entire lifecycle (hours, days, or weeks), waking and sleeping autonomously between events.
 
-This system uses an event-driven architecture paired with an autonomous agent loop that maintains state over long periods of time (days or weeks) for a single order.
+---
 
-- **Frontend**: Next.js 16 (App Router) + Tailwind CSS v4 + Material UI
-- **Backend**: Python FastAPI + SQLAlchemy (async)
-- **Database**: PostgreSQL (maintains state, logs, and supervisor configurations)
-- **LLM**: Groq (llama-3.3-70b-versatile for high-speed reasoning)
-- **Scheduling**: APScheduler (SQLAlchemy job store for delayed wake-ups)
+## Table of Contents
 
-### System Flow Diagram
+- [Overview](#overview)
+- [Tech Stack](#tech-stack)
+- [High-Level Architecture](#high-level-architecture)
+- [Data Flow — End to End](#data-flow--end-to-end)
+  - [1. User Creates a Supervisor](#1-user-creates-a-supervisor)
+  - [2. User Starts a Run for an Order](#2-user-starts-a-run-for-an-order)
+  - [3. Events Are Injected Into a Run](#3-events-are-injected-into-a-run)
+  - [4. Wake / Sleep Classifier](#4-wake--sleep-classifier)
+  - [5. Agent Execution Loop](#5-agent-execution-loop)
+  - [6. Scheduled Wake-Ups](#6-scheduled-wake-ups)
+  - [7. Run Completion](#7-run-completion)
+- [Agent Tools (Business Actions)](#agent-tools-business-actions)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Option A — Docker Compose (Recommended)](#option-a--docker-compose-recommended)
+  - [Option B — Manual Setup](#option-b--manual-setup)
+  - [Access](#access)
+- [API Reference](#api-reference)
+- [Pre-Built Scenarios (Simulator)](#pre-built-scenarios-simulator)
+- [Configuration](#configuration)
+- [Features](#features)
+- [License](#license)
+
+---
+
+## Overview
+
+Order Supervisor is a proof-of-concept system that demonstrates how a **long-running AI agent** can autonomously manage the lifecycle of an e-commerce order. Unlike traditional request-response AI — where you ask a question and get an answer — this system:
+
+1. **Persists** across hours/days with durable state stored in PostgreSQL.
+2. **Sleeps** when there is nothing to do, conserving LLM compute.
+3. **Wakes** when real-world events arrive (e.g. shipment delayed, payment failed) or on a self-determined schedule.
+4. **Acts** by executing business actions such as messaging internal teams or contacting the customer.
+5. **Learns** by updating its own internal state, instructions, and wake-up guidance dynamically.
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Frontend** | Next.js 16 (App Router) + Tailwind CSS v4 + MUI v9 | Dashboard, Run detail view, Event injection UI |
+| **Backend** | Python 3.12 + FastAPI + SQLAlchemy (async) | REST API, Agent orchestration, Event processing |
+| **Database** | PostgreSQL 16 | State persistence, Activity logs, Scheduler job store |
+| **LLM** | Groq API (`llama-3.3-70b-versatile`) | Agent reasoning, Wake/Sleep classification, Final summaries |
+| **Scheduling** | APScheduler (SQLAlchemy job store) | Durable delayed wake-ups that survive restarts |
+| **Containerization** | Docker + Docker Compose | One-command local deployment |
+
+---
+
+## High-Level Architecture
+
+```mermaid
+graph TB
+    subgraph "Frontend — Next.js"
+        UI[Dashboard UI]
+        RD[Run Detail Page]
+        EI[Event Injection Panel]
+    end
+
+    subgraph "Backend — FastAPI"
+        API[REST API Layer]
+        CLS[Wake/Sleep Classifier]
+        AGT[Agent Runtime Loop]
+        TLS[Tool Executors]
+        SCH[APScheduler]
+    end
+
+    subgraph "External"
+        DB[(PostgreSQL)]
+        LLM[Groq LLM API]
+    end
+
+    UI -->|HTTP| API
+    RD -->|HTTP| API
+    EI -->|POST /events| API
+
+    API -->|Read/Write| DB
+    API -->|Classify Event| CLS
+    CLS -->|LLM Call| LLM
+
+    API -->|Wake Agent| AGT
+    AGT -->|LLM Reasoning + Tool Calls| LLM
+    AGT -->|Execute Actions| TLS
+    TLS -->|Log Activities| DB
+    AGT -->|Update State| DB
+    AGT -->|Schedule Wake| SCH
+    SCH -->|Trigger at Time| AGT
+
+    style UI fill:#1e293b,stroke:#3b82f6,color:#fff
+    style RD fill:#1e293b,stroke:#3b82f6,color:#fff
+    style EI fill:#1e293b,stroke:#3b82f6,color:#fff
+    style API fill:#0f172a,stroke:#8b5cf6,color:#fff
+    style CLS fill:#0f172a,stroke:#f59e0b,color:#fff
+    style AGT fill:#0f172a,stroke:#10b981,color:#fff
+    style TLS fill:#0f172a,stroke:#10b981,color:#fff
+    style SCH fill:#0f172a,stroke:#f97316,color:#fff
+    style DB fill:#1e1b4b,stroke:#6366f1,color:#fff
+    style LLM fill:#1e1b4b,stroke:#ec4899,color:#fff
+```
+
+---
+
+## Data Flow — End to End
+
+This section walks through the complete lifecycle of data — from user interaction to agent action — step by step.
+
+### 1. User Creates a Supervisor
+
+A **Supervisor** is a reusable configuration template that defines the AI agent's personality, rules, and permissions.
 
 ```mermaid
 sequenceDiagram
-    actor User as External System / User
-    participant API as FastAPI Backend
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
     participant DB as PostgreSQL
-    participant LLM as Groq LLM
-    participant Sched as APScheduler
 
-    User->>API: 1. Inject Event (e.g., "Delayed")
-    API->>DB: 2. Load Run State & Instructions
-    API->>LLM: 3. Classifier: Does Agent need to wake?
-    LLM-->>API: Yes
-    
-    rect rgb(30, 30, 30)
-    Note over API,LLM: Agent Execution Loop
-    API->>LLM: 4. Analyze State & Decide Action
-    LLM-->>API: 5. Trigger Business Action
-    API->>DB: 6. Update Internal Order State
-    end
-    
-    LLM-->>API: 7. Decide to Sleep (e.g., 2 hours)
-    API->>Sched: 8. Schedule Next Wake
-    Sched-->>API: 9. Wake Triggered Automatically
+    User->>FE: Fill supervisor form (name, instructions, actions)
+    FE->>API: POST /api/supervisors
+    API->>DB: INSERT INTO supervisors
+    DB-->>API: Supervisor record (UUID)
+    API-->>FE: SupervisorResponse JSON
+    FE-->>User: ✅ Supervisor created
 ```
 
-### How It Works (Step-by-Step)
+**What gets stored:**
 
-1. **Supervisor Configuration**: A "Supervisor" template is created defining the persona, rules, and allowed actions (e.g., escalate, refund, message customer).
-2. **Run Initialization**: When a new order is placed, a "Run" is started and tied to a Supervisor. The Run maintains an ongoing, isolated state (like a long-term memory) exclusively for that order.
-3. **Event Injection**: As real-world events occur (e.g., payment processed, shipping delayed, customer complaints), they are injected into the specific Run via the API or frontend UI.
-4. **Wake/Sleep Classifier**: To save compute costs, a lightweight LLM rapidly evaluates incoming events against the Run's current state to decide if the main Agent needs to wake up, or if the event can be ignored (e.g., a routine status ping).
-5. **Agent Reasoning & Action**: If woken, the main Groq LLM evaluates the entire situation. It can execute business actions, update its internal JSON state, and even add dynamic rules (instructions) for itself to follow later.
-6. **Scheduled Sleeping**: Once the Agent finishes its current tasks, it decides exactly when it should automatically wake up next to check on the order, handing off the scheduling to the background APScheduler.
+| Field | Example | Purpose |
+|-------|---------|---------|
+| `name` | "Standard Order Supervisor" | Human-readable label |
+| `base_instruction` | "Monitor the order lifecycle..." | System prompt personality and rules |
+| `available_actions` | `["message_customer", ...]` | Which tools the agent can use |
+| `wake_guidance` | "Wake me for payment issues..." | Instructions for the event classifier |
+| `default_wake_behavior` | `{"wake_interval_minutes": 30}` | Default sleep settings |
 
-## Quick Start
+> **Note:** Two default supervisor templates ("Standard Order Supervisor" and "High-Priority Supervisor") are auto-seeded on first request if none exist.
+
+---
+
+### 2. User Starts a Run for an Order
+
+A **Run** is a long-lived agent session tied to a single order. One run = one order = one persistent agent.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant AGT as Agent Runtime
+    participant LLM as Groq LLM
+
+    User->>FE: Select supervisor + enter Order ID
+    FE->>API: POST /api/runs {supervisor_id, order_id}
+    API->>DB: Verify supervisor exists
+    API->>DB: Check no active run for this order
+    API->>DB: INSERT INTO runs (status=running, initial state)
+    API->>DB: INSERT INTO activities (type=system, subtype=run_started)
+    API-->>FE: RunResponse JSON
+
+    Note over API,AGT: Background Task (asyncio)
+    API--)AGT: run_agent(run_id, "run_start")
+    AGT->>DB: Load Run + Supervisor + Recent Activities
+    AGT->>LLM: System Prompt + "You have been woken up"
+    LLM-->>AGT: Tool calls (update_state, sleep_until, ...)
+    AGT->>DB: Execute tools → log activities → update state
+    AGT->>DB: Set status=sleeping, next_wake_at=...
+```
+
+**Initial state created for every run:**
+```json
+{
+  "order_id": "ORD-12345",
+  "order_status": "created",
+  "created_at": "2026-04-26T17:00:00Z",
+  "events_received": [],
+  "actions_taken": 0,
+  "priority": "normal"
+}
+```
+
+---
+
+### 3. Events Are Injected Into a Run
+
+Events represent real-world occurrences (payment confirmed, shipment delayed, customer message, etc.). They can be injected via the **frontend UI** or the **REST API**.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant DB as PostgreSQL
+    participant CLS as Classifier
+    participant AGT as Agent Runtime
+
+    User->>FE: Select event type + payload
+    FE->>API: POST /api/runs/{id}/events {event_type, payload}
+    API->>API: Validate event_type ∈ VALID_EVENTS
+    API->>DB: INSERT activity (type=event)
+    API->>DB: Update run.state (order_status, events_received)
+
+    alt Terminal Event (delivered, refund_completed, order_cancelled)
+        API->>DB: Log wake_decision (terminal_event)
+        API--)AGT: run_agent → then complete run
+    else Non-Terminal Event
+        API->>CLS: should_wake_agent(event, state, guidance)
+        CLS-->>API: {wake: true/false, reason: "..."}
+        API->>DB: Log wake_decision (classifier_decision)
+        alt Agent should wake
+            API->>DB: Set status=running
+            API--)AGT: run_agent(run_id, "event: <type>")
+        else Agent stays asleep
+            API-->>FE: "Event stored. Agent stays asleep."
+        end
+    end
+```
+
+**Supported event types:**
+
+| Event | Maps to Order Status | Always Wakes Agent? |
+|-------|---------------------|---------------------|
+| `order_created` | `created` | ✅ Yes |
+| `payment_confirmed` | `payment_confirmed` | No (classifier decides) |
+| `payment_failed` | `payment_failed` | ✅ Yes |
+| `shipment_created` | `shipped` | No (classifier decides) |
+| `shipment_delayed` | `shipment_delayed` | No (classifier decides) |
+| `delivered` | `delivered` | ✅ Yes (terminal) |
+| `refund_requested` | `refund_requested` | ✅ Yes |
+| `refund_completed` | `refunded` | Terminal event |
+| `customer_message_received` | — | ✅ Yes |
+| `order_cancelled` | `cancelled` | Terminal event |
+| `no_update_for_n_hours` | — | No (classifier decides) |
+| `item_out_of_stock` | — | No (classifier decides) |
+| `address_change_requested` | — | No (classifier decides) |
+
+---
+
+### 4. Wake / Sleep Classifier
+
+The classifier is a **lightweight LLM gate** that prevents unnecessary agent wake-ups, saving LLM compute costs.
+
+```mermaid
+flowchart TD
+    E[Incoming Event] --> A{Event in ALWAYS_WAKE set?}
+    A -->|Yes| W[✅ Wake Agent]
+    A -->|No| B{Run is paused?}
+    B -->|Yes| S[❌ Stay Asleep]
+    B -->|No| C{Wake guidance exists?}
+    C -->|No| W
+    C -->|Yes| D[🤖 LLM Classifier Call]
+    D -->|wake=true| W
+    D -->|wake=false| S
+
+    style W fill:#065f46,stroke:#10b981,color:#fff
+    style S fill:#7f1d1d,stroke:#ef4444,color:#fff
+    style D fill:#1e1b4b,stroke:#8b5cf6,color:#fff
+```
+
+**How it works:**
+1. **Hard-coded overrides** — Critical events (`order_created`, `payment_failed`, `delivered`, `refund_requested`, `customer_message_received`) *always* wake the agent.
+2. **Paused check** — If the run is paused by the user, the event is stored but the agent is not woken.
+3. **LLM classification** — For borderline events, the classifier LLM receives the agent's `wake_guidance` (e.g., "Wake me for shipment delays, let me sleep through routine pings") and makes a fast yes/no decision.
+
+---
+
+### 5. Agent Execution Loop
+
+Once woken, the agent enters a **tool-calling loop** — it reasons about the situation and executes actions iteratively until it decides to sleep.
+
+```mermaid
+flowchart TD
+    START[Agent Woken Up] --> LOAD[Load Run State + Supervisor + Last 30 Activities]
+    LOAD --> PROMPT[Build System Prompt with state, history, instructions]
+    PROMPT --> LLM[Send to Groq LLM]
+    LLM --> TC{Tool calls in response?}
+    TC -->|Yes| EXEC[Execute Tool: message_team / update_state / sleep / etc.]
+    EXEC --> LOG[Log Activity to DB]
+    LOG --> LLM
+    TC -->|No| REASON[Record Final Reasoning]
+    REASON --> CHECK{Completion recommended?}
+    CHECK -->|Yes, order terminal| COMPLETE[Generate Final Summary → Complete Run]
+    CHECK -->|No| SLEEP{Sleep was requested?}
+    SLEEP -->|Yes| SCHEDULE[Schedule APScheduler Wake-Up Job]
+    SLEEP -->|No| DEFAULT[Default Sleep: 30 min]
+    DEFAULT --> SCHEDULE
+
+    style START fill:#1e1b4b,stroke:#8b5cf6,color:#fff
+    style LLM fill:#1e1b4b,stroke:#ec4899,color:#fff
+    style COMPLETE fill:#065f46,stroke:#10b981,color:#fff
+    style SCHEDULE fill:#78350f,stroke:#f59e0b,color:#fff
+```
+
+**Key details:**
+- **Max 10 iterations** per wake cycle to prevent runaway loops.
+- The agent's system prompt includes: current state JSON, additional instructions, last 30 activities, the wake trigger, and available actions.
+- Every tool execution is logged as an `Activity` record in PostgreSQL.
+- The agent can **dynamically update its own wake guidance** via the `set_wake_guidance` tool, affecting future classifier decisions.
+
+---
+
+### 6. Scheduled Wake-Ups
+
+When the agent decides to sleep, it schedules a future wake-up using APScheduler with a **durable SQLAlchemy job store** (survives server restarts).
+
+```mermaid
+sequenceDiagram
+    participant AGT as Agent Runtime
+    participant DB as PostgreSQL
+    participant SCH as APScheduler
+
+    AGT->>DB: Set run.status = "sleeping", run.next_wake_at = T+30min
+    AGT->>SCH: schedule_wake_up(run_id, wake_at)
+    SCH->>DB: Store scheduled job (SQLAlchemy job store)
+
+    Note over SCH: ⏳ Time passes...
+
+    SCH->>AGT: DateTrigger fires → _wake_run(run_id)
+    AGT->>DB: Load run, set status = "running"
+    AGT->>AGT: Execute agent cycle (same loop as above)
+```
+
+**Additionally:**
+- A **periodic job** (`check_expired_runs`) runs every 5 minutes to auto-complete any runs that have exceeded their `max_end_at` (default: 72 hours).
+- Past-due wake times are handled immediately rather than being silently dropped.
+- If the agent doesn't explicitly call `sleep_until`, a **default 30-minute** wake interval is applied.
+
+---
+
+### 7. Run Completion
+
+A run ends when the order reaches a **terminal state** (`delivered`, `refunded`, or `cancelled`).
+
+```mermaid
+flowchart LR
+    A[Terminal Event Arrives] --> B[Agent Processes Final Actions]
+    B --> C[LLM Generates Final Summary]
+    C --> D[Run Status → completed]
+    D --> E[Cancel Scheduled Wake-Ups]
+
+    style A fill:#7f1d1d,stroke:#ef4444,color:#fff
+    style D fill:#065f46,stroke:#10b981,color:#fff
+```
+
+**The final summary includes:**
+- `summary` — Overview of the order lifecycle
+- `actions_taken` — List of all business actions executed and why
+- `key_learnings` — Insights from this order
+- `recommendations` — Suggestions for process improvements
+
+Users can also **manually terminate** a run via `POST /api/runs/{id}/terminate`, which generates a final summary regardless of order status.
+
+---
+
+## Agent Tools (Business Actions)
+
+The agent can call these tools during its reasoning loop. Tools are filtered per-supervisor based on `available_actions`.
+
+| Tool | Type | Description |
+|------|------|-------------|
+| `message_fulfillment_team` | Business Action | Send a message (with priority) to the fulfillment team |
+| `message_payments_team` | Business Action | Send a message (with priority) to the payments team |
+| `message_logistics_team` | Business Action | Send a message (with priority) to the logistics team |
+| `message_customer` | Business Action | Send a message to the customer (with subject line) |
+| `create_internal_note` | Business Action | Create an internal note (observation, risk, decision, escalation, general) |
+| `sleep_until` | Runtime | Schedule sleep for N minutes or until a specific time |
+| `update_state` | Runtime | Merge key-value updates into the run's persistent state |
+| `set_wake_guidance` | Runtime | Update instructions for the wake/sleep classifier |
+| `recommend_completion` | Runtime | Recommend the run should be completed (system verifies against terminal statuses) |
+
+> **Runtime tools** (`sleep_until`, `update_state`, `set_wake_guidance`, `recommend_completion`) are always available regardless of supervisor configuration.
+
+---
+
+## Project Structure
+
+```
+order-supervisor-poc/
+├── docker-compose.yml              # One-command deployment (Postgres + Backend + Frontend)
+├── .env                             # Environment variables (GROQ_API_KEY, DB URLs)
+│
+├── backend/
+│   ├── Dockerfile
+│   ├── requirements.txt             # Python dependencies
+│   ├── alembic.ini                  # Alembic migration config
+│   ├── alembic/                     # Database migration scripts
+│   └── app/
+│       ├── main.py                  # FastAPI app entry point + lifespan (scheduler init)
+│       ├── config.py                # Pydantic Settings (env vars → typed config)
+│       ├── database.py              # Async SQLAlchemy engine + session factory
+│       ├── models.py                # ORM models: Supervisor, Run, Activity
+│       ├── schemas.py               # Pydantic request/response schemas
+│       ├── scheduler.py             # APScheduler: schedule/cancel wake-ups, expired run checks
+│       ├── api/
+│       │   ├── supervisors.py       # CRUD for supervisor configs + default seeding
+│       │   ├── runs.py              # Run lifecycle: create, list, pause, resume, terminate
+│       │   └── events.py            # Event injection, wake/sleep routing, scenario simulator
+│       └── agent/
+│           ├── classifier.py        # Lightweight LLM classifier (wake vs. stay asleep)
+│           ├── runtime.py           # Main agent loop: LLM reasoning + tool-calling cycle
+│           ├── tools.py             # Tool definitions (OpenAI function schema) + executors
+│           └── prompts.py           # System prompt templates for agent, classifier, final summary
+│
+└── frontend/
+    ├── Dockerfile
+    ├── package.json                 # Next.js 16 + MUI + Tailwind
+    └── src/
+        ├── lib/
+        │   └── api.ts               # API client (fetch wrapper for all backend endpoints)
+        └── app/
+            ├── layout.tsx            # Root layout with sidebar navigation
+            ├── page.tsx              # Dashboard page (stats + recent runs)
+            ├── globals.css           # Global styles
+            ├── runs/
+            │   ├── page.tsx          # Runs list page
+            │   └── [id]/            # Run detail page (activities, event injection, controls)
+            └── supervisors/
+                └── page.tsx          # Supervisor management page
+```
+
+---
+
+## Getting Started
 
 ### Prerequisites
-- Docker & Docker Compose
-- Groq API Key
 
-### 1. Start with Docker Compose
+- **Docker & Docker Compose** (for containerized setup)
+- **Groq API Key** — get one free at [console.groq.com](https://console.groq.com)
+- For manual setup: Python 3.12+, Node.js 20+, PostgreSQL 16
+
+### Option A — Docker Compose (Recommended)
 
 ```bash
-# Set your Groq API key
-export GROQ_API_KEY=gsk_your-key-here
+# 1. Clone the repository
+git clone https://github.com/ankurraj2003/order-supervisor-poc.git
+cd order-supervisor-poc
 
-# Start all services
+# 2. Set your Groq API key in the .env file (or export it)
+echo "GROQ_API_KEY=gsk_your-key-here" > .env
+
+# 3. Start all services (PostgreSQL + Backend + Frontend)
 docker compose up --build
 ```
 
-### 2. Manual Setup
+This will:
+- Start PostgreSQL on port `5432`
+- Run Alembic migrations automatically
+- Start the FastAPI backend on port `8000`
+- Start the Next.js frontend on port `3000`
 
-#### PostgreSQL
+### Option B — Manual Setup
+
+#### 1. Start PostgreSQL
+
 ```bash
-# Start PostgreSQL (Docker)
 docker run -d --name order-supervisor-db \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
@@ -77,68 +474,143 @@ docker run -d --name order-supervisor-db \
   postgres:16-alpine
 ```
 
-#### Backend
+#### 2. Start the Backend
+
 ```bash
 cd backend
+
+# Create and activate virtual environment
+python -m venv .venv
+
+# Windows
+.\.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 
-# Copy and edit .env
-cp ../.env.example .env
-# Edit .env with your GROQ_API_KEY
+# Create .env file
+echo "GROQ_API_KEY=gsk_your-key-here" > .env
 
-# Run migrations
+# Run database migrations
 alembic upgrade head
 
-# Start server
+# Start the server
 uvicorn app.main:app --reload --port 8000
 ```
 
-#### Frontend
+#### 3. Start the Frontend
+
 ```bash
 cd frontend
+
+# Install dependencies
 npm install
 
-# Start dev server
+# Start the dev server
 npm run dev
 ```
 
-### 3. Access
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+### Access
+
+| Service | URL |
+|---------|-----|
+| **Frontend Dashboard** | [http://localhost:3000](http://localhost:3000) |
+| **Backend API** | [http://localhost:8000](http://localhost:8000) |
+| **Interactive API Docs (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) |
+| **Health Check** | [http://localhost:8000/api/health](http://localhost:8000/api/health) |
+
+---
+
+## API Reference
+
+### Supervisors
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/supervisors` | List all supervisor configs (auto-seeds defaults if empty) |
+| `GET` | `/api/supervisors/{id}` | Get a supervisor by ID |
+| `POST` | `/api/supervisors` | Create a new supervisor config |
+| `PUT` | `/api/supervisors/{id}` | Update an existing supervisor |
+
+### Runs
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/runs` | Create and start a new run for an order |
+| `GET` | `/api/runs` | List all runs (optionally filter by `?status=sleeping`) |
+| `GET` | `/api/runs/stats` | Get dashboard statistics (total, active, completed, events, actions) |
+| `GET` | `/api/runs/{id}` | Get full run details (state, supervisor, instructions, etc.) |
+| `GET` | `/api/runs/{id}/activities` | Get activity log (supports `?limit=`, `?offset=`, `?activity_type=`) |
+| `POST` | `/api/runs/{id}/instructions` | Add a run-specific instruction to the agent's context |
+| `POST` | `/api/runs/{id}/pause` | Pause a run (cancels scheduled wake-ups) |
+| `POST` | `/api/runs/{id}/resume` | Resume a paused run (triggers immediate agent evaluation) |
+| `POST` | `/api/runs/{id}/terminate` | Terminate a run and generate a final summary |
+
+### Events
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/runs/{id}/events` | Inject an event into a run |
+| `POST` | `/api/simulator/scenario?run_id={id}` | Fire a pre-built event scenario |
+
+### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/health` | Health check |
+
+---
+
+## Pre-Built Scenarios (Simulator)
+
+The simulator lets you fire a sequence of events into a run to test different order journeys. Events are fired with a 3-second delay between each.
+
+| Scenario | Events Sequence |
+|----------|----------------|
+| **`happy_path`** | `order_created` → `payment_confirmed` → `shipment_created` → `delivered` |
+| **`delayed_shipment`** | `order_created` → `payment_confirmed` → `shipment_created` → `shipment_delayed` → `customer_message_received` → `delivered` |
+| **`payment_failure`** | `order_created` → `payment_failed` → `customer_message_received` → `payment_confirmed` → `shipment_created` → `delivered` |
+| **`refund`** | `order_created` → `payment_confirmed` → `shipment_created` → `delivered` → `refund_requested` |
+
+---
+
+## Configuration
+
+All configuration is managed via environment variables (loaded from `.env`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/order_supervisor` | Async PostgreSQL connection string |
+| `DATABASE_URL_SYNC` | `postgresql+psycopg2://postgres:postgres@localhost:5432/order_supervisor` | Sync PostgreSQL connection (for APScheduler job store) |
+| `GROQ_API_KEY` | — | **Required.** Your Groq API key |
+| `AGENT_MODEL` | `llama-3.3-70b-versatile` | LLM model for the main agent reasoning |
+| `CLASSIFIER_MODEL` | `llama-3.3-70b-versatile` | LLM model for the wake/sleep classifier |
+| `MAX_RUN_AGE_HOURS` | `72` | Auto-complete runs older than this |
+| `DEFAULT_WAKE_INTERVAL_MINUTES` | `30` | Default sleep duration when agent doesn't explicitly set one |
+
+---
 
 ## Features
 
-- ✅ Long-running AI run per order
-- ✅ Event-driven wake/sleep behavior
-- ✅ Scheduled wake-ups via APScheduler
-- ✅ Lightweight LLM classifier for event importance
-- ✅ 5 business actions (message teams, create notes)
-- ✅ Activity timeline with all actions/events/reasoning
-- ✅ State/memory persistence across wake cycles
-- ✅ Run-specific instructions (add anytime)
-- ✅ Event injection UI + pre-built scenarios
-- ✅ Pause / Resume / Terminate controls
-- ✅ Final summary with learnings and recommendations
-- ✅ Multiple supervisor templates
-- ✅ Agent-generated wake-up guidance
+- ✅ **Long-running AI agent per order** — persistent state across wake/sleep cycles
+- ✅ **Event-driven wake/sleep** — intelligent classifier gates agent wake-ups
+- ✅ **Scheduled wake-ups** — durable APScheduler jobs stored in PostgreSQL
+- ✅ **5 business actions** — message teams (fulfillment, payments, logistics), message customer, internal notes
+- ✅ **4 runtime tools** — sleep control, state management, wake guidance, completion recommendation
+- ✅ **Activity timeline** — full audit trail of events, decisions, actions, and reasoning
+- ✅ **Dynamic instructions** — add run-specific instructions to the agent at any time
+- ✅ **Agent-generated wake guidance** — the agent teaches the classifier when to wake it
+- ✅ **Pre-built event scenarios** — one-click simulation of common order journeys
+- ✅ **Pause / Resume / Terminate** — full lifecycle controls for every run
+- ✅ **LLM-generated final summary** — actions taken, key learnings, and recommendations
+- ✅ **Multiple supervisor templates** — different personality/aggressiveness profiles
+- ✅ **Auto-expiry** — runs older than 72 hours are automatically completed
+- ✅ **Full REST API** — with interactive Swagger docs at `/docs`
 
-## API Endpoints
+---
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /api/supervisors | Create supervisor config |
-| GET | /api/supervisors | List supervisors |
-| GET | /api/supervisors/{id} | Get supervisor |
-| PUT | /api/supervisors/{id} | Update supervisor |
-| POST | /api/runs | Start a new run |
-| GET | /api/runs | List runs |
-| GET | /api/runs/stats | Dashboard stats |
-| GET | /api/runs/{id} | Get run detail |
-| GET | /api/runs/{id}/activities | Get activity log |
-| POST | /api/runs/{id}/events | Inject event |
-| POST | /api/runs/{id}/instructions | Add instruction |
-| POST | /api/runs/{id}/pause | Pause run |
-| POST | /api/runs/{id}/resume | Resume run |
-| POST | /api/runs/{id}/terminate | Terminate run |
-| POST | /api/simulator/scenario | Fire event scenario |
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
