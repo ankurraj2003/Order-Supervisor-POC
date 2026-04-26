@@ -113,143 +113,7 @@ graph TB
 
 ---
 
-## Data Flow — End to End
-
-This section walks through the complete lifecycle of data — from user interaction to agent action — step by step.
-
-### 1. User Creates a Supervisor
-
-A **Supervisor** is a reusable configuration template that defines the AI agent's personality, rules, and permissions.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant FE as Frontend
-    participant API as FastAPI
-    participant DB as PostgreSQL
-
-    User->>FE: Fill supervisor form (name, instructions, actions)
-    FE->>API: POST /api/supervisors
-    API->>DB: INSERT INTO supervisors
-    DB-->>API: Supervisor record (UUID)
-    API-->>FE: SupervisorResponse JSON
-    FE-->>User: ✅ Supervisor created
-```
-
-**What gets stored:**
-
-| Field | Example | Purpose |
-|-------|---------|---------|
-| `name` | "Standard Order Supervisor" | Human-readable label |
-| `base_instruction` | "Monitor the order lifecycle..." | System prompt personality and rules |
-| `available_actions` | `["message_customer", ...]` | Which tools the agent can use |
-| `wake_guidance` | "Wake me for payment issues..." | Instructions for the event classifier |
-| `default_wake_behavior` | `{"wake_interval_minutes": 30}` | Default sleep settings |
-
-> **Note:** Two default supervisor templates ("Standard Order Supervisor" and "High-Priority Supervisor") are auto-seeded on first request if none exist.
-
----
-
-### 2. User Starts a Run for an Order
-
-A **Run** is a long-lived agent session tied to a single order. One run = one order = one persistent agent.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant FE as Frontend
-    participant API as FastAPI
-    participant DB as PostgreSQL
-    participant AGT as Agent Runtime
-    participant LLM as Groq LLM
-
-    User->>FE: Select supervisor + enter Order ID
-    FE->>API: POST /api/runs {supervisor_id, order_id}
-    API->>DB: Verify supervisor exists
-    API->>DB: Check no active run for this order
-    API->>DB: INSERT INTO runs (status=running, initial state)
-    API->>DB: INSERT INTO activities (type=system, subtype=run_started)
-    API-->>FE: RunResponse JSON
-
-    Note over API,AGT: Background Task (asyncio)
-    API--)AGT: run_agent(run_id, "run_start")
-    AGT->>DB: Load Run + Supervisor + Recent Activities
-    AGT->>LLM: System Prompt + "You have been woken up"
-    LLM-->>AGT: Tool calls (update_state, sleep_until, ...)
-    AGT->>DB: Execute tools → log activities → update state
-    AGT->>DB: Set status=sleeping, next_wake_at=...
-```
-
-**Initial state created for every run:**
-```json
-{
-  "order_id": "ORD-12345",
-  "order_status": "created",
-  "created_at": "2026-04-26T17:00:00Z",
-  "events_received": [],
-  "actions_taken": 0,
-  "priority": "normal"
-}
-```
-
----
-
-### 3. Events Are Injected Into a Run
-
-Events represent real-world occurrences (payment confirmed, shipment delayed, customer message, etc.). They can be injected via the **frontend UI** or the **REST API**.
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant FE as Frontend
-    participant API as FastAPI
-    participant DB as PostgreSQL
-    participant CLS as Classifier
-    participant AGT as Agent Runtime
-
-    User->>FE: Select event type + payload
-    FE->>API: POST /api/runs/{id}/events {event_type, payload}
-    API->>API: Validate event_type ∈ VALID_EVENTS
-    API->>DB: INSERT activity (type=event)
-    API->>DB: Update run.state (order_status, events_received)
-
-    alt Terminal Event (delivered, refund_completed, order_cancelled)
-        API->>DB: Log wake_decision (terminal_event)
-        API--)AGT: run_agent → then complete run
-    else Non-Terminal Event
-        API->>CLS: should_wake_agent(event, state, guidance)
-        CLS-->>API: {wake: true/false, reason: "..."}
-        API->>DB: Log wake_decision (classifier_decision)
-        alt Agent should wake
-            API->>DB: Set status=running
-            API--)AGT: run_agent(run_id, "event: <type>")
-        else Agent stays asleep
-            API-->>FE: "Event stored. Agent stays asleep."
-        end
-    end
-```
-
-**Supported event types:**
-
-| Event | Maps to Order Status | Always Wakes Agent? |
-|-------|---------------------|---------------------|
-| `order_created` | `created` | ✅ Yes |
-| `payment_confirmed` | `payment_confirmed` | No (classifier decides) |
-| `payment_failed` | `payment_failed` | ✅ Yes |
-| `shipment_created` | `shipped` | No (classifier decides) |
-| `shipment_delayed` | `shipment_delayed` | No (classifier decides) |
-| `delivered` | `delivered` | ✅ Yes (terminal) |
-| `refund_requested` | `refund_requested` | ✅ Yes |
-| `refund_completed` | `refunded` | Terminal event |
-| `customer_message_received` | — | ✅ Yes |
-| `order_cancelled` | `cancelled` | Terminal event |
-| `no_update_for_n_hours` | — | No (classifier decides) |
-| `item_out_of_stock` | — | No (classifier decides) |
-| `address_change_requested` | — | No (classifier decides) |
-
----
-
-### 4. Wake / Sleep Classifier
+### Wake / Sleep Classifier
 
 The classifier is a **lightweight LLM gate** that prevents unnecessary agent wake-ups, saving LLM compute costs.
 
@@ -277,7 +141,7 @@ flowchart TD
 
 ---
 
-### 5. Agent Execution Loop
+### Agent Execution Loop
 
 Once woken, the agent enters a **tool-calling loop** — it reasons about the situation and executes actions iteratively until it decides to sleep.
 
@@ -312,7 +176,7 @@ flowchart TD
 
 ---
 
-### 6. Scheduled Wake-Ups
+### Scheduled Wake-Ups
 
 When the agent decides to sleep, it schedules a future wake-up using APScheduler with a **durable SQLAlchemy job store** (survives server restarts).
 
@@ -338,28 +202,7 @@ sequenceDiagram
 - Past-due wake times are handled immediately rather than being silently dropped.
 - If the agent doesn't explicitly call `sleep_until`, a **default 30-minute** wake interval is applied.
 
----
-
-### 7. Run Completion
-
-A run ends when the order reaches a **terminal state** (`delivered`, `refunded`, or `cancelled`).
-
-```mermaid
-flowchart LR
-    A[Terminal Event Arrives] --> B[Agent Processes Final Actions]
-    B --> C[LLM Generates Final Summary]
-    C --> D[Run Status → completed]
-    D --> E[Cancel Scheduled Wake-Ups]
-
-    style A fill:#7f1d1d,stroke:#ef4444,color:#fff
-    style D fill:#065f46,stroke:#10b981,color:#fff
-```
-
-**The final summary includes:**
-- `summary` — Overview of the order lifecycle
-- `actions_taken` — List of all business actions executed and why
-- `key_learnings` — Insights from this order
-- `recommendations` — Suggestions for process improvements
+--
 
 Users can also **manually terminate** a run via `POST /api/runs/{id}/terminate`, which generates a final summary regardless of order status.
 
