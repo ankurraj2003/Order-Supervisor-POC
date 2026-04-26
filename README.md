@@ -425,7 +425,6 @@ All configuration is managed via environment variables (loaded from `.env`):
 - ✅ **LLM-generated final summary** — actions taken, key learnings, and recommendations
 - ✅ **Multiple supervisor templates** — different personality/aggressiveness profiles
 - ✅ **Auto-expiry** — runs older than 72 hours are automatically completed
-- ✅ **Full REST API** — with interactive Swagger docs at `/docs`
 
 ---
 
