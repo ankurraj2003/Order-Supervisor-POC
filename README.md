@@ -172,23 +172,6 @@ flowchart TD
 
 When the agent decides to sleep, it schedules a future wake-up using APScheduler with a **durable SQLAlchemy job store** (survives server restarts).
 
-```mermaid
-sequenceDiagram
-    participant AGT as Agent Runtime
-    participant DB as PostgreSQL
-    participant SCH as APScheduler
-
-    AGT->>DB: Set run.status = "sleeping", run.next_wake_at = T+30min
-    AGT->>SCH: schedule_wake_up(run_id, wake_at)
-    SCH->>DB: Store scheduled job (SQLAlchemy job store)
-
-    Note over SCH: ⏳ Time passes...
-
-    SCH->>AGT: DateTrigger fires → _wake_run(run_id)
-    AGT->>DB: Load run, set status = "running"
-    AGT->>AGT: Execute agent cycle (same loop as above)
-```
-
 **Additionally:**
 - A **periodic job** (`check_expired_runs`) runs every 5 minutes to auto-complete any runs that have exceeded their `max_end_at` (default: 72 hours).
 - Past-due wake times are handled immediately rather than being silently dropped.
