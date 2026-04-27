@@ -255,8 +255,9 @@ order-supervisor-poc/
 
 ### Prerequisites
 
-- **Docker & Docker Compose** (for containerized setup)
-- **Groq API Key** — get one free at [console.groq.com](https://console.groq.com)
+- **Docker & Docker Compose** (v2 recommended)
+- **Groq API Key** — Required for AI reasoning. Get one for free at [console.groq.com](https://console.groq.com)
+- **Git** (to clone the repo)
 - For manual setup: Python 3.12+, Node.js 20+, PostgreSQL 16
 
 ### Option A — Docker Compose (Recommended)
@@ -266,18 +267,15 @@ order-supervisor-poc/
 git clone https://github.com/ankurraj2003/order-supervisor-poc.git
 cd order-supervisor-poc
 
-# 2. Set your Groq API key in the .env file (or export it)
+# 2. Create a .env file and set your Groq API key
 echo "GROQ_API_KEY=gsk_your-key-here" > .env
 
-# 3. Start all services (PostgreSQL + Backend + Frontend)
+# 3. Start all services
 docker compose up --build
 ```
 
-This will:
-- Start PostgreSQL on port `5432`
-- Run Alembic migrations automatically
-- Start the FastAPI backend on port `8000`
-- Start the Next.js frontend on port `3000`
+> [!TIP]
+> The first build will take a few minutes as it installs all dependencies inside the containers. Subsequent starts will be much faster.
 
 ### Option B — Manual Setup
 
@@ -308,8 +306,13 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env file
-echo "GROQ_API_KEY=gsk_your-key-here" > .env
+# Create .env file and configure settings
+# Note: If Postgres is running in Docker, use localhost as the host.
+cat <<EOT > .env
+GROQ_API_KEY=gsk_your-key-here
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/order_supervisor
+DATABASE_URL_SYNC=postgresql+psycopg2://postgres:postgres@localhost:5432/order_supervisor
+EOT
 
 # Run database migrations
 alembic upgrade head
@@ -325,6 +328,9 @@ cd frontend
 
 # Install dependencies
 npm install
+
+# Create .env.local for API URL (optional if running on localhost:8000)
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
 
 # Start the dev server
 npm run dev
@@ -425,6 +431,21 @@ All configuration is managed via environment variables (loaded from `.env`):
 - ✅ **LLM-generated final summary** — actions taken, key learnings, and recommendations
 - ✅ **Multiple supervisor templates** — different personality/aggressiveness profiles
 - ✅ **Auto-expiry** — runs older than 72 hours are automatically completed
+
+---
+
+## Troubleshooting
+
+### Database Connection Refused
+If you see `psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: Connection refused`, it means the PostgreSQL server is not running or is not accessible.
+- **Docker Compose**: Ensure the `postgres` service is healthy: `docker compose ps`.
+- **Manual Setup**: Verify your `DATABASE_URL` in `backend/.env` points to the correct host (use `localhost` instead of `postgres` if running outside Docker networks).
+
+### Docker Build is Slow
+If the `frontend` build is taking a long time during "transferring context", ensure the `.dockerignore` file exists in the `frontend/` directory to skip `node_modules` and `.next`.
+
+### LLM Reasoning Errors
+Ensure your `GROQ_API_KEY` is valid and has sufficient quota. You can monitor backend logs for specific API errors: `docker compose logs -f backend`.
 
 ---
 
